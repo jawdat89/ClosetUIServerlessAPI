@@ -150,7 +150,7 @@ public class PDFService : IPDFService
                 var partPDFInfo = new PartPDFInfo
                 {
                     ID = part.ID,
-                    Dimensions = $"{part.Wt}mm x {part.Ht}mm",
+                    Dimensions = $"{part.PartWidth}mm x {part.PartHeight}mm",
                     Position = $"X: {xPosition}mm, Y: {yPosition}mm",
                     RowNumber = rowNumber
                 };
