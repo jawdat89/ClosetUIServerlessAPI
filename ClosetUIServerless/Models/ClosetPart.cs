@@ -4,9 +4,7 @@ namespace ClosetUIServerless.Models;
 
 public class ClosetPart
 {
-    [JsonPropertyName("id")]
     public int ID { get; set; }
-    [JsonPropertyName("plateId")]
     public int PlateID { get; set; }
     public int X { get; set; }  // in mm   X on big wood plate
     public int Y { get; set; }  // in mm   Y on big wood plate
