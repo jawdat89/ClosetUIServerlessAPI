@@ -12,171 +12,120 @@ public class PDFService : IPDFService
     public async Task<byte[]?> GenerateAndDownloadPdf(dynamic model)
     {
         ParamsModel? paramsModel = System.Text.Json.JsonSerializer.Deserialize<ParamsModel>(JsonConvert.SerializeObject(model));
-
         if (paramsModel == null)
         {
-            return default;
+            return null;
         }
 
-        var pdfData = await PreparePDFData(paramsModel);
+        PDFData pdfData = await PreparePDFData(paramsModel);
+        return GeneratePdfDocument(pdfData);
+    }
 
-        var document = Document.Create(doc =>
+    private async Task<PDFData> PreparePDFData(ParamsModel paramsModel)
+    {
+        var pdfData = new PDFData
         {
-            doc.Page(page =>
+            Title = "Board Layout",
+            Boards = new List<BoardPDFInfo>()
+        };
+
+        int boardIndex = 1;
+        double xPosition = 0, yPosition = 0;
+        double currentRowMaxHeight = 0;
+        int rowNumber = 1;
+
+        BoardPDFInfo currentBoard = new BoardPDFInfo { BoardIndex = boardIndex, Parts = new List<PartPDFInfo>() };
+
+        foreach (var group in paramsModel.FitHeights)
+        {
+            foreach (var partMeasure in group)
+            {
+                ClosetPart part = paramsModel.Parts.FirstOrDefault(p => p.ID == partMeasure.ID);
+                if (part == null) continue;
+
+                for (int qty = 0; qty < part.PartQty; qty++)
+                {
+                    if (xPosition + part.Wt > paramsModel.TotalWidth)
+                    {
+                        yPosition += currentRowMaxHeight;
+                        xPosition = 0;
+                        currentRowMaxHeight = 0;
+                        rowNumber++;
+                    }
+
+                    if (yPosition + part.Ht > paramsModel.TotalHeight)
+                    {
+                        pdfData.Boards.Add(currentBoard);
+                        boardIndex++;
+                        currentBoard = new BoardPDFInfo { BoardIndex = boardIndex, Parts = new List<PartPDFInfo>() };
+                        xPosition = 0;
+                        yPosition = 0;
+                        currentRowMaxHeight = 0;
+                        rowNumber = 1;
+                    }
+
+                    currentBoard.Parts.Add(new PartPDFInfo
+                    {
+                        ID = part.ID,
+                        Dimensions = $"{part.PartWidth}mm x {part.PartHeight}mm",
+                        Position = $"X: {xPosition}mm, Y: {yPosition}mm",
+                        RowNumber = rowNumber
+                    });
+
+                    // Reset position for next group
+                    xPosition += part.Wt;
+                    currentRowMaxHeight = Math.Max(currentRowMaxHeight, part.Ht);
+                }
+            }
+
+            xPosition = 0;
+            yPosition += currentRowMaxHeight;
+            currentRowMaxHeight = 0;
+        }
+
+        if (currentBoard.Parts.Any())
+        {
+            pdfData.Boards.Add(currentBoard);
+        }
+
+        await Task.CompletedTask; // This line is technically redundant but makes the method async.
+        return pdfData;
+    }
+
+    private byte[] GeneratePdfDocument(PDFData pdfData)
+    {
+        var document = Document.Create(container =>
+        {
+            container.Page(page =>
             {
                 page.Size(PageSizes.A4);
                 page.Margin(40);
-                page.DefaultTextStyle(TextStyle.Default.FontSize(12));
-                page.Header()
-                    .PaddingBottom(20)
-                    .Background(Colors.Grey.Lighten1)
-                    .AlignCenter()
-                    .AlignMiddle()
-                    .Text($"{pdfData.Title}")
-                    .FontSize(20)
-                    .SemiBold();
+                page.Header().Text(pdfData.Title).FontSize(20).SemiBold();
 
-                page.Content().Padding(10).Column(column =>
+                page.Content().Column(column =>
                 {
-                    int partIndex = 0;
-
                     foreach (var board in pdfData.Boards)
                     {
-                        if (board.Parts.Count > 0)
+                        column.Item().Text($"Board {board.BoardIndex}").FontSize(16).Bold();
+                        foreach (var part in board.Parts)
                         {
-                            column.Item().Element(element =>
-                            {
-                                element.Row(row =>
-                                {
-                                    row.RelativeItem().Text($"Board {board.BoardIndex}").Bold().FontSize(16);
-                                });
-                            });
-
-                            foreach (var part in board.Parts)
-                            {
-                                // Include the row number in the part's text
-                                column.Item().Padding(2).Text($"Row {part.RowNumber}, Part {part.ID}: {part.Dimensions}, Position: {part.Position}");
-                            }
-
-                            partIndex++;
-
-                            if (partIndex == board.Parts.Count + 1)
-                            {
-                                column.Item().PageBreak();
-                                partIndex = 0;
-                            }
-                            else
-                            {
-                                column.Item().Padding(10);
-                            }
+                            column.Item().Text($"Row {part.RowNumber}, Part {part.ID}: {part.Dimensions}, Position: {part.Position}");
                         }
                     }
                 });
 
-                page.Footer()
-                    .AlignCenter()
-                    .Text(text =>
-                    {
-                        text.DefaultTextStyle(x => x.FontSize(18));
-                        text.CurrentPageNumber();
-                        text.Span(" / ");
-                        text.TotalPages();
-                    });
+                page.Footer().AlignCenter().Text(text =>
+                {
+                    text.DefaultTextStyle(x => x.FontSize(18));
+                    text.CurrentPageNumber();
+                    text.Span(" / ");
+                    text.TotalPages();
+                });
             });
         });
 
         using var stream = new MemoryStream();
         document.GeneratePdf(stream);
         return stream.ToArray();
-    }
-
-    private static async Task<PDFData> PreparePDFData(ParamsModel paramsModel)
-    {
-        var pdfData = new PDFData
-        {
-            Title = "Board Layout",
-            Boards = []
-        };
-
-        var boardWidth = paramsModel.TotalWidth;
-        var boardHeight = paramsModel.TotalHeight;
-        int boardIndex = 1;
-        double xPosition = 0, yPosition = 0;
-        double currentRowMaxHeight = 0;
-
-        var fitWidthsCopy = new List<List<PartMeasu>>(paramsModel.FitWidths);
-        int rowNumber = 1; // Initialize row number for the first row.
-
-        while (fitWidthsCopy.Count > 0)
-        {
-            var row = fitWidthsCopy.First();
-            BoardPDFInfo boardPDFInfo = new()
-            {
-                BoardIndex = boardIndex,
-                Parts = []
-            };
-
-            foreach (var partMeasure in row)
-            {
-                var part = paramsModel.Parts.FirstOrDefault(p => p.ID == partMeasure.ID);
-                if (part == null) continue;
-
-                // Check if a new row or board is needed due to size constraints.
-                if (xPosition + part.Wt > boardWidth)
-                {
-                    // Start a new row within the current board.
-                    yPosition += currentRowMaxHeight;
-                    xPosition = 0;
-                    currentRowMaxHeight = 0;
-                    rowNumber++; // Increment the row number within the current board.
-                }
-
-                if (yPosition + part.Ht > boardHeight)
-                {
-                    // Save the current board and start a new one.
-                    pdfData.Boards.Add(boardPDFInfo);
-                    boardIndex++;
-                    boardPDFInfo = new BoardPDFInfo
-                    {
-                        BoardIndex = boardIndex,
-                        Parts = []
-                    };
-                    xPosition = 0;
-                    yPosition = 0;
-                    currentRowMaxHeight = 0;
-                    rowNumber = 1; // Reset row number for the new board.
-                }
-
-                var partPDFInfo = new PartPDFInfo
-                {
-                    ID = part.ID,
-                    Dimensions = $"{part.PartWidth}mm x {part.PartHeight}mm",
-                    Position = $"X: {xPosition}mm, Y: {yPosition}mm",
-                    RowNumber = rowNumber
-                };
-
-                boardPDFInfo.Parts.Add(partPDFInfo);
-                xPosition += part.Wt;
-                currentRowMaxHeight = Math.Max(currentRowMaxHeight, part.Ht);
-            }
-
-            // After processing a row, prepare for the next one.
-            fitWidthsCopy.RemoveAt(0);
-            if (xPosition > 0) // Only adjust if the last row was partially filled.
-            {
-                xPosition = 0;
-                yPosition += currentRowMaxHeight;
-                currentRowMaxHeight = 0;
-                rowNumber++;
-            }
-
-            if (boardPDFInfo.Parts.Count > 0 && !pdfData.Boards.Contains(boardPDFInfo))
-            {
-                pdfData.Boards.Add(boardPDFInfo);
-            }
-        }
-
-        await Task.CompletedTask;
-        return pdfData;
     }
 }
